@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Retail Customer Clusters Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {background: #f4f4fc;font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:10px;}
+    h1 {text-align:center;margin-bottom:18px;}
+    .controls {text-align:center;margin-bottom:18px;}
+    select, input, button {font-size:1rem;padding:4px 10px;margin-right:10px;}
+    canvas {background:#fff;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.08);margin:24px auto 24px auto;display:block;}
+    #cluster-container {display: flex;flex-wrap: wrap;justify-content: center;gap: 1.2rem;}
+    .card {background:#fff;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.08);padding:14px 18px;width:205px;animation:fadeInUp 0.6s cubic-bezier(0.23,1,0.32,1);transition:transform 0.3s;cursor:pointer;}
+    .card:hover {transform:scale(1.08) rotate(-2deg);}
+    .cluster-label {border-radius:4px;padding:4px 10px;font-weight:bold;color:#fff;margin-bottom:10px;display:inline-block;}
+    .chart-title {text-align:center;font-weight:bold;margin-top:20px;margin-bottom:4px;font-size:17px;}
+    .hide{display:none;}
+    .modal-bg {position: fixed;top: 0;left: 0;width: 100vw;height: 100vh;background: rgba(52,73,94,0.42);display:flex;justify-content:center;align-items:center;}
+    .modal {background: #fff;padding: 25px 35px;border-radius: 15px;box-shadow: 0 8px 24px rgba(0,0,0,0.2);}
+    .modal-close {cursor: pointer;font-size: 22px;position:absolute;right:20px;top:12px;}
+    @keyframes fadeInUp{from{opacity:0;transform:translateY(25px);}to{opacity:1;transform:translateY(0);}}
+  </style>
+</head>
+<body>
+  <h1>Retail Customer Clusters</h1>
+  <div class="controls">
+    <label for="clusterSelect">Filter by Cluster:</label>
+    <select id="clusterSelect"><option value="all">All</option></select>
+    <label for="searchInput">Search by Gender:</label>
+    <input type="text" id="searchInput" placeholder="e.g. Female">
+    <button id="resetBtn">Reset Filters</button>
+    <input type="file" id="csvInput" accept=".csv">
+    <button id="exportBtn">Export Displayed</button>
+  </div>
+  <div class="chart-title">Cluster Distribution</div>
+  <canvas id="pieChart" width="400" height="240"></canvas>
+  <div class="chart-title">Age vs Annual Income by Cluster</div>
+  <canvas id="scatterChart" width="500" height="320"></canvas>
+  <div id="cluster-container"></div>
+  <div id="modal" class="hide"></div>
+  <script>
+    // DEMO: Replace with or supplement your CSV uploads!
+    let customers = [
+      {CustomerID: 1, Gender: "Male", Age: 19, Income: 15, Score: 39, Cluster: 2},
+      {CustomerID: 2, Gender: "Male", Age: 21, Income: 15, Score: 81, Cluster: 2},
+      {CustomerID: 3, Gender: "Female", Age: 20, Income: 16, Score: 6, Cluster: 0},
+      {CustomerID: 4, Gender: "Female", Age: 23, Income: 16, Score: 77, Cluster: 2},
+      {CustomerID: 5, Gender: "Female", Age: 31, Income: 17, Score: 40, Cluster: 0},
+      {CustomerID: 6, Gender: "Female", Age: 22, Income: 17, Score: 76, Cluster: 2},
+      {CustomerID: 7, Gender: "Female", Age: 35, Income: 18, Score: 6, Cluster: 0},
+      {CustomerID: 8, Gender: "Female", Age: 23, Income: 18, Score: 94, Cluster: 2},
+      {CustomerID: 9, Gender: "Male", Age: 64, Income: 19, Score: 3, Cluster: 0},
+      {CustomerID: 10, Gender: "Female", Age: 30, Income: 19, Score: 72, Cluster: 2},
+      {CustomerID: 11, Gender: "Male", Age: 38, Income: 81, Score: 67, Cluster: 1},
+      {CustomerID: 12, Gender: "Female", Age: 26, Income: 70, Score: 54, Cluster: 3},
+      {CustomerID: 13, Gender: "Male", Age: 45, Income: 42, Score: 29, Cluster: 4}
+    ];
+
+    const colors = [
+      '#3498db','#e67e22','#16a085','#8e44ad','#e74c3c',
+      '#2ecc71','#34495e','#f1c40f','#95a5a6','#d35400'
+    ];
+    let pieChart, scatterChart;
+    let filtered = [...customers];
+
+    function getClusterIds(data) {
+      return [...new Set(data.map(c => c.Cluster))].sort((a,b)=>a-b);
+    }
+    function getClusterCounts(data, ids) {
+      return ids.map(id => data.filter(c => c.Cluster === id).length);
+    }
+    function getScatterData(data, ids) {
+      return ids.map((id, idx) => ({
+        label: `Cluster ${id}`,
+        data: data.filter(c => c.Cluster === id).map(c=>({x: c.Age, y: c.Income})),
+        backgroundColor: colors[idx % colors.length],
+        borderColor: '#fff',
+        pointRadius: 6,
+      }));
+    }
+
+    // Pie chart with tooltips
+    function renderPie(data) {
+      const clusterIds = getClusterIds(data);
+      if (pieChart) pieChart.destroy();
+      const pieCtx = document.getElementById('pieChart').getContext('2d');
+      pieChart = new Chart(pieCtx, {
+        type: 'pie',
+        data: {
+          labels: clusterIds.map(id => `Cluster ${id}`),
+          datasets: [{
+            data: getClusterCounts(data, clusterIds),
+            backgroundColor: colors.slice(0,clusterIds.length)
+          }]
+        },
+        options: {
+          responsive: false,
+          plugins: {
+            legend: { position:'bottom' },
+            tooltip: { enabled: true }
+          },
+          animation: { animateScale: true }
+        }
+      });
+    }
+
+    function renderScatter(data) {
+      const clusterIds = getClusterIds(data);
+      if (scatterChart) scatterChart.destroy();
+      const scatterCtx = document.getElementById('scatterChart').getContext('2d');
+      scatterChart = new Chart(scatterCtx, {
+        type: 'scatter',
+        data: {datasets:getScatterData(data,clusterIds)},
+        options: {
+          responsive: false,
+          scales: {
+            x: { title:{display:true,text:'Age'}, min:15, max:70 },
+            y: { title:{display:true,text:'Income (k$)'}, min:5, max:100 }
+          },
+          plugins: { legend:{display:true,position:'bottom'} },
+          animation: { animateScale: true }
+        }
+      });
+    }
+
+    function renderClusterDropdown(data) {
+      const sel = document.getElementById('clusterSelect');
+      sel.innerHTML = '<option value="all">All</option>';
+      getClusterIds(data).forEach(id => {
+        let opt = document.createElement('option');
+        opt.value = id;
+        opt.text = `Cluster ${id}`;
+        sel.appendChild(opt);
+      });
+    }
+
+    // Cards + Modal
+    function renderCards(data) {
+      const container = document.getElementById('cluster-container');
+      container.innerHTML = '';
+      data.forEach(c => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `<span class="cluster-label" style="background:${colors[getClusterIds(customers).indexOf(c.Cluster)%colors.length]}">Cluster ${c.Cluster}</span>
+          <div><strong>ID:</strong> ${c.CustomerID}</div>
+          <div><strong>Gender:</strong> ${c.Gender}</div>
+          <div><strong>Age:</strong> ${c.Age}</div>
+          <div><strong>Income:</strong> $${c.Income}k</div>
+          <div><strong>Score:</strong> ${c.Score}</div>
+        `;
+        card.onclick = () => showModal(c);
+        container.appendChild(card);
+      });
+    }
+
+    function showModal(cust) {
+      const modal = document.getElementById('modal');
+      modal.className = 'modal-bg';
+      modal.innerHTML = `<div class="modal">
+        <span class="modal-close" onclick="document.getElementById('modal').className='hide';">&times;</span>
+        <h3>Customer Details</h3>
+        <div><strong>ID:</strong> ${cust.CustomerID}</div>
+        <div><strong>Gender:</strong> ${cust.Gender}</div>
+        <div><strong>Age:</strong> ${cust.Age}</div>
+        <div><strong>Income:</strong> $${cust.Income}k</div>
+        <div><strong>Score:</strong> ${cust.Score}</div>
+        <div><strong>Cluster:</strong> ${cust.Cluster}</div>
+      </div>`;
+    }
+
+    function filterData() {
+      let val = document.getElementById('clusterSelect').value;
+      let searchTerm = document.getElementById('searchInput').value.trim().toLowerCase();
+      filtered = customers.filter(c => {
+        let matchCluster = (val === 'all') || (String(c.Cluster) === val);
+        let matchSearch = searchTerm.length === 0 || c.Gender.toLowerCase().includes(searchTerm);
+        return matchCluster && matchSearch;
+      });
+      renderCards(filtered);
+      renderPie(filtered);
+      renderScatter(filtered);
+    }
+
+    document.getElementById('clusterSelect').addEventListener('change', filterData);
+    document.getElementById('searchInput').addEventListener('input', filterData);
+    document.getElementById('resetBtn').onclick = () => {
+      document.getElementById('clusterSelect').value = 'all';
+      document.getElementById('searchInput').value = '';
+      filtered = [...customers];
+      filterData();
+    };
+    document.getElementById('exportBtn').onclick = () => {
+      let csv = "CustomerID,Gender,Age,Income,Score,Cluster\n" + filtered.map(c => (
+        [c.CustomerID,c.Gender,c.Age,c.Income,c.Score,c.Cluster].join(",")
+      )).join("\n");
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "filtered_customers.csv";
+      a.click();
+    };
+    document.getElementById('csvInput').onchange = function(e) {
+      const f = e.target.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const t = evt.target.result;
+        // CSV parse: expects columns CustomerID,Gender,Age,Annual Income (k$),Spending Score (1-100),Cluster
+        let rows = t.split('\n').map(l=>l.trim()).filter(Boolean);
+        let cols = rows[0].split(',');
+        customers = rows.slice(1).map(r => {
+          let vals = r.split(',');
+          return {
+            CustomerID: vals[0],
+            Gender: vals[1],
+            Age: Number(vals[2]),
+            Income: Number(vals[3]), // assuming 4th column is income
+            Score: Number(vals[4]), // assuming 5th is score
+            Cluster: Number(vals[5]||0)
+          };
+        });
+        filtered = [...customers];
+        renderClusterDropdown(customers);
+        filterData();
+      };
+      reader.readAsText(f);
+    };
+
+    // Initial rendering:
+    renderClusterDropdown(customers);
+    filterData();
+  </script>
+</body>
+</html>
